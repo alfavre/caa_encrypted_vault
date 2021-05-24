@@ -1,8 +1,7 @@
 use super::*;
 use file_n_metadata::{EncryptedFile, MetaData};
 use sodiumoxide::base64::*;
-use sodiumoxide::crypto::pwhash::HashedPassword;
-use sodiumoxide::crypto::{hash, pwhash, secretbox, verify};
+use sodiumoxide::crypto::{hash, pwhash, secretbox};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Error, ErrorKind, Write};
 
@@ -38,26 +37,6 @@ impl Vault {
             shared_secret_vec.push(metadata.shared_secret.clone());
         }
         return shared_secret_vec;
-    }
-
-    /// as we never change the content, we should never have pbs
-    pub fn retrieve_metadata_by_b64_shared_secret(
-        &self,
-        b64_shared_secret: &str,
-    ) -> Result<&MetaData, Error> {
-        match self
-            .metadata_vec
-            .iter()
-            .find(|&metad| metad.shared_secret == b64_shared_secret)
-        {
-            Some(metad) => return Ok(metad),
-            None => {
-                return Err(Error::new(
-                    ErrorKind::Other,
-                    format!("shared secret not found"),
-                ))
-            }
-        }
     }
 
     /// as we never change the content, we should never have pbs
@@ -138,25 +117,6 @@ impl Vault {
         write!(output, "{}", encrypted_file_json); // I'm okay with a panic here
     }
 
-    pub fn slice_to_string(slice: &[u8]) -> String {
-        String::from(std::str::from_utf8(&slice).unwrap())
-    }
-
-    pub fn string_to_slice(string: &str) -> &[u8] {
-        // might cause lifetime problems
-        string.as_bytes()
-    }
-
-    pub fn vec_to_string(vec: Vec<u8>) -> String {
-        String::from_utf8(vec).unwrap()
-    }
-
-    pub fn vec_to_slice<'a>(vec: Vec<u8>) -> () {
-        // might cause lifetime problems
-        println!("dont call this method");
-        //&vec
-    }
-
     fn store_all(&self) -> () {
         self.store_all_encrypted_file();
         self.store_all_metadata();
@@ -188,7 +148,7 @@ impl Vault {
         .unwrap();
 
         // making xsalsa key from master key
-        let my_key_xsalsa = secretbox::xsalsa20poly1305::Key::from_slice(my_master_key).unwrap();
+        let my_key_xsalsa = secretbox::Key::from_slice(my_master_key).unwrap();
 
         // making a nonce for the master key
         let my_nonce = secretbox::gen_nonce();
@@ -284,13 +244,13 @@ impl Vault {
 
         // we need a xsalsa key for each file
         let my_file_key_xsalsa_1 =
-            secretbox::xsalsa20poly1305::Key::from_slice(my_file_key_1).unwrap();
+            secretbox::Key::from_slice(my_file_key_1).unwrap();
         let my_file_key_xsalsa_2 =
-            secretbox::xsalsa20poly1305::Key::from_slice(my_file_key_2).unwrap();
+            secretbox::Key::from_slice(my_file_key_2).unwrap();
         let my_file_key_xsalsa_3 =
-            secretbox::xsalsa20poly1305::Key::from_slice(my_file_key_3).unwrap();
+            secretbox::Key::from_slice(my_file_key_3).unwrap();
         let my_file_key_xsalsa_4 =
-            secretbox::xsalsa20poly1305::Key::from_slice(my_file_key_4).unwrap();
+            secretbox::Key::from_slice(my_file_key_4).unwrap();
 
         // we encrypt the file data
         let my_test_file_bytes_1: &[u8] = constant::TEST_DATA_TO_ENCRYPT.as_bytes(); // those weird casts are a sight to behold
@@ -409,11 +369,11 @@ mod tests {
         .unwrap();
 
         //we have to find xsalsa key
-        let my_key_xsalsa = secretbox::xsalsa20poly1305::Key::from_slice(my_master_key).unwrap();
+        let my_key_xsalsa = secretbox::Key::from_slice(my_master_key).unwrap();
 
         //we have to retriev the nonce
         let my_nonce_slice = decode(&test_metadata_vec[0].user_nonce, Variant::UrlSafe).unwrap();
-        let my_nonce = secretbox::xsalsa20poly1305::Nonce::from_slice(&my_nonce_slice).unwrap();
+        let my_nonce = secretbox::Nonce::from_slice(&my_nonce_slice).unwrap();
 
         // we decrypt to check if it works
         let mut my_deciphered_test_name_vec: Vec<String> = Vec::new();
@@ -421,7 +381,7 @@ mod tests {
             let decoded_enc_name = decode(enc_name, Variant::UrlSafe).unwrap();
             let my_deciphered_test_name =
                 secretbox::open(&decoded_enc_name, &my_nonce, &my_key_xsalsa).unwrap();
-            my_deciphered_test_name_vec.push(Vault::vec_to_string(my_deciphered_test_name));
+            my_deciphered_test_name_vec.push(String::from_utf8(my_deciphered_test_name).unwrap());
         }
 
         assert_eq!(
@@ -470,21 +430,22 @@ mod tests {
             .unwrap();
 
             //we have to find xsalsa key
-            let my_key_xsalsa = secretbox::xsalsa20poly1305::Key::from_slice(my_key).unwrap();
+            let my_key_xsalsa = secretbox::Key::from_slice(my_key).unwrap();
 
             //we have to retriev the nonce
             let my_nonce_slice = decode(&file.file_nonce, Variant::UrlSafe).unwrap();
-            let my_nonce = secretbox::xsalsa20poly1305::Nonce::from_slice(&my_nonce_slice).unwrap();
+            let my_nonce = secretbox::Nonce::from_slice(&my_nonce_slice).unwrap();
 
             let decoded_enc_data = decode(file.encrypted_data, Variant::UrlSafe).unwrap();
             let my_deciphered_data =
                 secretbox::open(&decoded_enc_data, &my_nonce, &my_key_xsalsa).unwrap();
-            decrypted_data_vec.push(Vault::vec_to_string(my_deciphered_data));
+            decrypted_data_vec.push(String::from_utf8(my_deciphered_data).unwrap());
 
             let pt_hash_slice = decode(file.pt_filename_hash, Variant::UrlSafe).unwrap();
             pt_hash_vec.push(hash::Digest::from_slice(&pt_hash_slice).unwrap());
         }
 
+        // we get the pt hash
         let mut hash_state1 = hash::State::new();
         hash_state1.update(constant::TEST_STRONG_PASS.as_bytes());
         hash_state1.update(constant::TEST_NAME_TO_ENCRYPT.as_bytes());
@@ -539,11 +500,11 @@ mod tests {
         .unwrap();
 
         //we have to find xsalsa key
-        let my_key_xsalsa = secretbox::xsalsa20poly1305::Key::from_slice(my_master_key).unwrap();
+        let my_key_xsalsa = secretbox::Key::from_slice(my_master_key).unwrap();
 
         //we have to retriev the nonce
         let my_nonce_slice = decode(&test_metad.user_nonce, Variant::UrlSafe).unwrap();
-        let my_nonce = secretbox::xsalsa20poly1305::Nonce::from_slice(&my_nonce_slice).unwrap();
+        let my_nonce = secretbox::Nonce::from_slice(&my_nonce_slice).unwrap();
 
         // we decrypt to check if it works
         let mut my_deciphered_test_name_vec: Vec<String> = Vec::new();
@@ -551,7 +512,7 @@ mod tests {
             let decoded_enc_name = decode(enc_name, Variant::UrlSafe).unwrap();
             let my_deciphered_test_name =
                 secretbox::open(&decoded_enc_name, &my_nonce, &my_key_xsalsa).unwrap();
-            my_deciphered_test_name_vec.push(Vault::vec_to_string(my_deciphered_test_name));
+            my_deciphered_test_name_vec.push(String::from_utf8(my_deciphered_test_name).unwrap());
         }
 
         assert_eq!(

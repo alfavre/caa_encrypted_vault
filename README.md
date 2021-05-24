@@ -10,45 +10,70 @@ This is a practical rust work for school.
 
 Implement an online vault storing encrypted files
 
+### Report
+
+This file is **NOT** the report,
+the real report can be found in `doc/report.md` or `doc/report.pdf`
+
 ### Understanding
 
 there is three entities: the `client`, the `server` and the `vault`
 
 the server is just a bridge between the two, when a client is authenticated it can ask for encrypted file, that will have to be decrypted by itself.
 
-is the password a master key, capable of answering challenges, decrypting the file list and deriving each key for each file ?
+The password is a master key, capable of answering challenges, decrypting the file list and deriving each key for each file. The hard coded password is `4KL7g#.7c,HMPRrZ` and can be foun in `src/constant.rs`
 
 ### Checkmarks
 
-- [ ] client side
-  - [ ] client has only one password
-  - [ ] client can answer challenges
-  - [ ] client can decrypt filenames list
-  - [ ] client can ask for a file
-  - [ ] client can decrypt file
-- [ ] server side
-  - [ ] server can ask challenges
-  - [ ] server can fetch encrypted filename list
-  - [ ] server can fetch encrypted file
-- [ ] vault side
-  - [ ] vault stores encrypted filenames
-  - [ ] vault stores encrypted files
+- [X] client side
+  - [X] client has only one password
+  - [X] client can answer challenges
+  - [X] client can decrypt filenames list
+  - [X] client can ask for a file
+  - [X] client can decrypt file
+- [X] server side
+  - [X] server can ask challenges
+  - [X] server can fetch encrypted filename list
+  - [X] server can fetch encrypted file
+- [X] vault side
+  - [X] vault stores encrypted filenames
+  - [X] vault stores encrypted files
 
 ### Possible Bonuses (Boni ?)
 
-- server can work with multiple user
-  - server cant distinguish between user file (aka which file is to whomst)
-- file sharing among user ???
-  - what ???
-- multi factor auth
-  - just cc from sec
-- use TPM to secure secrets
-- and more
-
-### Report
-
-can be found in doc/
+- [X] server can work with multiple user
+  - [X] server cant distinguish between user file (aka which file is to whomst)
+- [ ] file sharing among user ???
+  - [ ] what ???
+- [ ] multi factor auth
+  - [ ] just cc from sec
+- [ ] use TPM to secure secrets
+  - [ ] what?
+- [ ] and more
 
 ### Notes
 
-Everything will be simulated (database, server)
+Everything will be simulated (database, server, communications)
+
+### Help for my poor brain
+
+```rust
+    pub fn slice_to_string(slice: &[u8]) -> String {
+        String::from(std::str::from_utf8(&slice).unwrap())
+    }
+
+    pub fn string_to_slice(string: &str) -> &[u8] {
+        // might cause lifetime problems
+        string.as_bytes()
+    }
+
+    pub fn vec_to_string(vec: Vec<u8>) -> String {
+        String::from_utf8(vec).unwrap()
+    }
+
+    pub fn vec_to_slice<'a>(vec: Vec<u8>) -> () {
+        // might cause lifetime problems
+        println!("dont call this method");
+        //&vec
+    }
+```

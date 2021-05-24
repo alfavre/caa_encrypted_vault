@@ -3,12 +3,10 @@ use file_n_metadata::{EncryptedFile, MetaData};
 use sodiumoxide::base64::*;
 use sodiumoxide::randombytes::randombytes;
 use std::io::{Error, ErrorKind};
+use sodiumoxide::crypto::*;
+
 
 use vault::Vault;
-
-pub fn hello_world() -> () {
-    println!("hello world server edition")
-}
 
 pub struct Server {
     vault: Vault,
@@ -45,7 +43,7 @@ impl Server {
     }
 
     pub fn send_challenge(&mut self) -> String {
-        let nonce = encode(&randombytes(256), Variant::UrlSafe);
+        let nonce = encode(&randombytes(256), Variant::UrlSafe); // im still scared of birthday clowns
         self.nonce = nonce.clone(); // clone because no time to think
         return nonce;
     }
@@ -75,7 +73,14 @@ impl Server {
             .retrieve_metadata_by_index_value(self.id.unwrap())
         {
             Ok(m) => return m,
-            Err(_) => panic!("id is wrong somehow"),
+            Err(e) => panic!("id is wrong somehow, message from above {}", e),
         };
+    }
+
+    pub fn ask_for_specific_file_with_pt_hash(&self, b64_pt_hash: &str) -> &EncryptedFile {
+        match self.vault.retrieve_enc_file_by_b64_hash(b64_pt_hash) {
+            Ok(enc_file) => enc_file,
+            Err(e) => panic!("plain text hash is wrong somehow, message from above {}", e),
+        }
     }
 }
