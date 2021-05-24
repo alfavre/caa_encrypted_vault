@@ -1,6 +1,8 @@
 use super::*;
+use file_n_metadata::{EncryptedFile, MetaData};
 use read_input::prelude::*;
 use server::Server;
+use sodiumoxide::base64::*;
 
 pub fn hello_world() -> () {
     println!("hello world client edition")
@@ -8,24 +10,108 @@ pub fn hello_world() -> () {
 
 pub struct Client {
     master_password: String,
-    user_id: u64,
 }
 
 impl Client {
-    fn new(master_password: String, user_id: u64) -> Client {
+    fn new(master_password: String) -> Client {
         Client {
             master_password: master_password,
-            user_id: user_id,
         }
     }
 
-    pub fn entrypoint(server: Server) -> () {
-        let user_id: u64 = input().msg("Please enter your unique id.\nId: ").get();
-        let master_password: String = input().msg("Please enter you password.\nPassword: ").get();
-        let client = Client::new(master_password, user_id);
+    fn answer_challenge(&self, b64_nonce: &str) -> String {
+        let digest_pass = hash::hash(self.master_password.as_bytes());
+        let shared_secret = encode(digest_pass, Variant::UrlSafe);
 
-        println!("We will now connect to server. Please wait a moment.");
+        let mut hash_state = hash::State::new();
+        hash_state.update(shared_secret.as_bytes());
+        hash_state.update(b64_nonce.as_bytes());
+        let answer = hash_state.finalize();
 
-        let connected_server = Server::connection();
+        encode(answer, Variant::UrlSafe)
+    }
+
+    fn decrypt_stuff(&self, b64_encrypted_text: &str, b64_salt: &str, b64_nonce: &str) -> String {
+        let my_salt_slice = decode(b64_salt, Variant::UrlSafe).unwrap();
+        let my_salt = pwhash::Salt::from_slice(&my_salt_slice).unwrap();
+
+        let my_nonce_slice = decode(&b64_nonce, Variant::UrlSafe).unwrap();
+        let my_nonce = secretbox::xsalsa20poly1305::Nonce::from_slice(&my_nonce_slice).unwrap();
+
+        let mut k = secretbox::Key([0; secretbox::KEYBYTES]);
+        let secretbox::Key(ref mut my_key) = k;
+        pwhash::derive_key(
+            my_key,
+            self.master_password.as_bytes(), // we derive master pass here
+            &my_salt,
+            pwhash::OPSLIMIT_INTERACTIVE,
+            pwhash::MEMLIMIT_INTERACTIVE,
+        )
+        .unwrap();
+
+        let my_key_xsalsa = secretbox::xsalsa20poly1305::Key::from_slice(my_key).unwrap();
+
+        let decoded_stuff = decode(b64_encrypted_text, Variant::UrlSafe).unwrap();
+        let my_deciphered_stuff =
+            secretbox::open(&decoded_stuff, &my_nonce, &my_key_xsalsa).unwrap();
+
+        String::from_utf8(my_deciphered_stuff).unwrap()
+    }
+
+    fn handle_exchange(&mut self, server: Server) {
+        let my_metadata = server.ask_for_metadata(); // this will never leave this scope in theory
+
+        let mut my_decrypted_filenames: Vec<String> = Vec::new();
+
+        for encrypted_filename in &my_metadata.encrypted_filenames {
+            my_decrypted_filenames.push(self.decrypt_stuff(
+                encrypted_filename,
+                my_metadata.user_salt.as_str(),
+                my_metadata.user_nonce.as_str(),
+            ))
+        }
+
+        let my_choice = Client::handle_file_choice(&my_decrypted_filenames);
+        println!("{}", my_choice);
+    }
+
+    fn handle_file_choice(decrypted_filenames: &Vec<String>) -> usize {
+        let mut message = String::from("");
+        let mut i: usize = 1;
+        for s in decrypted_filenames {
+            message.push_str(format!("{}:\t", i).as_str());
+            message.push_str(s.as_str());
+            message.push_str("\n");
+            i += 1;
+        }
+
+        let choice: usize = input()
+            .repeat_msg(message)
+            .err(format!("Please enter a number in the range 1 to {}.\n", i))
+            .add_test(move |x| *x <= i && *x != 0)
+            .get();
+
+        choice
+    }
+
+    pub fn entrypoint() -> () {
+        let master_password: String = input().msg("Please enter your password.\nPassword: ").get();
+        let mut client = Client::new(master_password);
+
+        println!("We will now connect to the server. Please wait a moment.");
+
+        let mut connected_server = Server::connection();
+
+        let challenge = connected_server.send_challenge();
+
+        match connected_server.is_answer_accepted(client.answer_challenge(challenge.as_str())) {
+            true => println!("challenge passed"),
+            false => {
+                println!("challenge failed");
+                return;
+            }
+        }
+
+        client.handle_exchange(connected_server);
     }
 }

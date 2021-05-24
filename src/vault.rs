@@ -1,10 +1,10 @@
 use super::*;
 use file_n_metadata::{EncryptedFile, MetaData};
 use sodiumoxide::base64::*;
-use sodiumoxide::crypto::{pwhash, secretbox};
 use sodiumoxide::crypto::pwhash::HashedPassword;
+use sodiumoxide::crypto::{hash, pwhash, secretbox, verify};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Error, Write};
+use std::io::{BufRead, BufReader, Error, ErrorKind, Write};
 
 ///this should control all access to db
 #[derive(Debug)]
@@ -22,6 +22,61 @@ impl Vault {
             encrypted_file_table_path: String::from(path_enc_file_vault),
             metadata_vec: Vault::retrieve_all_metadata(path_metadata_vault),
             encrypted_files_vec: Vault::retrieve_all_encrypted_file(path_enc_file_vault),
+        }
+    }
+
+    pub fn default() -> Vault {
+        Vault::new(
+            constant::VAULT_METADATA_PATH,
+            constant::VAULT_ENCRYPTED_FILE_PATH,
+        )
+    }
+
+    pub fn retrieve_all_metadata_shared_secret(&self) -> Vec<String> {
+        let mut shared_secret_vec = Vec::new();
+        for metadata in &self.metadata_vec {
+            shared_secret_vec.push(metadata.shared_secret.clone());
+        }
+        return shared_secret_vec;
+    }
+
+    /// as we never change the content, we should never have pbs
+    pub fn retrieve_metadata_by_b64_shared_secret(
+        &self,
+        b64_shared_secret: &str,
+    ) -> Result<&MetaData, Error> {
+        match self
+            .metadata_vec
+            .iter()
+            .find(|&metad| metad.shared_secret == b64_shared_secret)
+        {
+            Some(metad) => return Ok(metad),
+            None => {
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    format!("shared secret not found"),
+                ))
+            }
+        }
+    }
+
+    /// as we never change the content, we should never have pbs
+    pub fn retrieve_metadata_by_index_value(&self, index: usize) -> Result<&MetaData, Error> {
+        match self.metadata_vec.get(index) {
+            Some(metad) => Ok(metad),
+            None => Err(Error::new(ErrorKind::Other, format!("Out of bound"))),
+        }
+    }
+
+    /// as we never change the content, we should never have pbs
+    pub fn retrieve_enc_file_by_b64_hash(&self, b64_hash: &str) -> Result<&EncryptedFile, Error> {
+        match self
+            .encrypted_files_vec
+            .iter()
+            .find(|&enc_file| enc_file.pt_filename_hash == b64_hash)
+        {
+            Some(enc_file) => return Ok(enc_file),
+            None => return Err(Error::new(ErrorKind::Other, format!("hash not found"))),
         }
     }
 
@@ -99,7 +154,7 @@ impl Vault {
     pub fn vec_to_slice<'a>(vec: Vec<u8>) -> () {
         // might cause lifetime problems
         println!("dont call this method");
-        // &vec
+        //&vec
     }
 
     fn store_all(&self) -> () {
@@ -120,7 +175,7 @@ impl Vault {
         //create the salt for the user
         let my_user_salt = pwhash::gen_salt();
 
-        // derive the first key from pass and hash
+        // derive the first key from pass and salt
         let mut mk = secretbox::Key([0; secretbox::KEYBYTES]);
         let secretbox::Key(ref mut my_master_key) = mk;
         pwhash::derive_key(
@@ -158,11 +213,12 @@ impl Vault {
         my_encrypted_filenames.push(encode(my_test_name_encrypted3.clone(), Variant::UrlSafe));
         my_encrypted_filenames.push(encode(my_test_name_encrypted4.clone(), Variant::UrlSafe));
 
+        //we will get shared secret, it's just the password's hash for simplification and so that the client really only needs the master password
+        let digest = hash::hash(constant::TEST_STRONG_PASS.as_bytes());
         // we fill our struct for db
         let my_metadata = MetaData {
-            unique_id: 0,
             encrypted_filenames: my_encrypted_filenames,
-            shared_secret: String::from("None"),
+            shared_secret: encode(digest, Variant::UrlSafe),
             user_salt: encode(my_user_salt, Variant::UrlSafe),
             user_nonce: encode(my_nonce, Variant::UrlSafe),
         };
@@ -266,62 +322,50 @@ impl Vault {
         );
 
         // we get a hash of the pt for each filename
-        let pwh1 = pwhash::pwhash(
-            constant::TEST_NAME_TO_ENCRYPT.as_bytes(),
-            pwhash::OPSLIMIT_INTERACTIVE,
-            pwhash::MEMLIMIT_INTERACTIVE,
-        )
-        .unwrap();
-        let pwh_bytes1 = pwh1.as_ref();
+        let mut hash_state1 = hash::State::new();
+        hash_state1.update(constant::TEST_STRONG_PASS.as_bytes());
+        hash_state1.update(constant::TEST_NAME_TO_ENCRYPT.as_bytes());
+        let digest1 = hash_state1.finalize();
 
-        let pwh2 = pwhash::pwhash(
-            constant::TEST_NAME_TO_ENCRYPT_2.as_bytes(),
-            pwhash::OPSLIMIT_INTERACTIVE,
-            pwhash::MEMLIMIT_INTERACTIVE,
-        )
-        .unwrap();
-        let pwh_bytes2 = pwh2.as_ref();
+        let mut hash_state2 = hash::State::new();
+        hash_state2.update(constant::TEST_STRONG_PASS.as_bytes());
+        hash_state2.update(constant::TEST_NAME_TO_ENCRYPT_2.as_bytes());
+        let digest2 = hash_state2.finalize();
 
-        let pwh3 = pwhash::pwhash(
-            constant::TEST_NAME_TO_ENCRYPT_3.as_bytes(),
-            pwhash::OPSLIMIT_INTERACTIVE,
-            pwhash::MEMLIMIT_INTERACTIVE,
-        )
-        .unwrap();
-        let pwh_bytes3 = pwh3.as_ref();
+        let mut hash_state3 = hash::State::new();
+        hash_state3.update(constant::TEST_STRONG_PASS.as_bytes());
+        hash_state3.update(constant::TEST_NAME_TO_ENCRYPT_3.as_bytes());
+        let digest3 = hash_state3.finalize();
 
-        let pwh4 = pwhash::pwhash(
-            constant::TEST_NAME_TO_ENCRYPT_4.as_bytes(),
-            pwhash::OPSLIMIT_INTERACTIVE,
-            pwhash::MEMLIMIT_INTERACTIVE,
-        )
-        .unwrap();
-        let pwh_bytes4 = pwh4.as_ref();
+        let mut hash_state4 = hash::State::new();
+        hash_state4.update(constant::TEST_STRONG_PASS.as_bytes());
+        hash_state4.update(constant::TEST_NAME_TO_ENCRYPT_4.as_bytes());
+        let digest4 = hash_state4.finalize();
 
         // we fill our structs
         let my_file_struct_1 = EncryptedFile {
-            pt_filename_hash: encode(pwh_bytes1, Variant::UrlSafe), // this one has been encrypted with master key, not file key
+            pt_filename_hash: encode(digest1, Variant::UrlSafe), // this one has been encrypted with master key, not file key
             encrypted_data: encode(my_test_file_encrypted_1, Variant::UrlSafe),
             file_salt: encode(my_file_salt1, Variant::UrlSafe),
             file_nonce: encode(my_file_nonce_1, Variant::UrlSafe),
         };
 
         let my_file_struct_2 = EncryptedFile {
-            pt_filename_hash: encode(pwh_bytes2, Variant::UrlSafe), // this one has been encrypted with master key, not file key
+            pt_filename_hash: encode(digest2, Variant::UrlSafe), // this one has been encrypted with master key, not file key
             encrypted_data: encode(my_test_file_encrypted_2, Variant::UrlSafe),
             file_salt: encode(my_file_salt2, Variant::UrlSafe),
             file_nonce: encode(my_file_nonce_2, Variant::UrlSafe),
         };
 
         let my_file_struct_3 = EncryptedFile {
-            pt_filename_hash: encode(pwh_bytes3, Variant::UrlSafe), // this one has been encrypted with master key, not file key
+            pt_filename_hash: encode(digest3, Variant::UrlSafe), // this one has been encrypted with master key, not file key
             encrypted_data: encode(my_test_file_encrypted_3, Variant::UrlSafe),
             file_salt: encode(my_file_salt3, Variant::UrlSafe),
             file_nonce: encode(my_file_nonce_3, Variant::UrlSafe),
         };
 
         let my_file_struct_4 = EncryptedFile {
-            pt_filename_hash: encode(pwh_bytes4, Variant::UrlSafe), // this one has been encrypted with master key, not file key
+            pt_filename_hash: encode(digest4, Variant::UrlSafe), // this one has been encrypted with master key, not file key
             encrypted_data: encode(my_test_file_encrypted_4, Variant::UrlSafe),
             file_salt: encode(my_file_salt4, Variant::UrlSafe),
             file_nonce: encode(my_file_nonce_4, Variant::UrlSafe),
@@ -350,15 +394,15 @@ mod tests {
 
         // we have to find master key
 
-        let my_user_hash_slice = decode(&test_metadata_vec[0].user_salt, Variant::UrlSafe).unwrap();
-        let my_user_hash = pwhash::Salt::from_slice(&my_user_hash_slice).unwrap();
+        let my_user_salt_slice = decode(&test_metadata_vec[0].user_salt, Variant::UrlSafe).unwrap();
+        let my_user_salt = pwhash::Salt::from_slice(&my_user_salt_slice).unwrap();
 
         let mut mk = secretbox::Key([0; secretbox::KEYBYTES]);
         let secretbox::Key(ref mut my_master_key) = mk;
         pwhash::derive_key(
             my_master_key,
             constant::TEST_STRONG_PASS.as_bytes(), // we derive master pass here
-            &my_user_hash,
+            &my_user_salt,
             pwhash::OPSLIMIT_INTERACTIVE,
             pwhash::MEMLIMIT_INTERACTIVE,
         )
@@ -378,7 +422,6 @@ mod tests {
             let my_deciphered_test_name =
                 secretbox::open(&decoded_enc_name, &my_nonce, &my_key_xsalsa).unwrap();
             my_deciphered_test_name_vec.push(Vault::vec_to_string(my_deciphered_test_name));
-            
         }
 
         assert_eq!(
@@ -401,7 +444,6 @@ mod tests {
 
     #[test]
     fn verify_files() {
-        let test_metadata_vec = Vault::retrieve_all_metadata(constant::VAULT_METADATA_PATH);
         let test_enc_file_vec =
             Vault::retrieve_all_encrypted_file(constant::VAULT_ENCRYPTED_FILE_PATH);
 
@@ -410,7 +452,7 @@ mod tests {
         // we have to find all files key
 
         let mut decrypted_data_vec: Vec<String> = Vec::new();
-        let mut pt_hahs_vec = Vec::new();
+        let mut pt_hash_vec = Vec::new();
 
         for file in test_enc_file_vec {
             let my_file_hash_slice = decode(file.file_salt, Variant::UrlSafe).unwrap();
@@ -438,20 +480,95 @@ mod tests {
             let my_deciphered_data =
                 secretbox::open(&decoded_enc_data, &my_nonce, &my_key_xsalsa).unwrap();
             decrypted_data_vec.push(Vault::vec_to_string(my_deciphered_data));
-        
+
             let pt_hash_slice = decode(file.pt_filename_hash, Variant::UrlSafe).unwrap();
-            pt_hahs_vec.push(HashedPassword::from_slice(&pt_hash_slice).unwrap());
+            pt_hash_vec.push(hash::Digest::from_slice(&pt_hash_slice).unwrap());
         }
 
-        assert!(pwhash::pwhash_verify(&pt_hahs_vec[0], constant::TEST_NAME_TO_ENCRYPT.as_bytes()));
-        assert!(pwhash::pwhash_verify(&pt_hahs_vec[1], constant::TEST_NAME_TO_ENCRYPT_2.as_bytes()));
-        assert!(pwhash::pwhash_verify(&pt_hahs_vec[2], constant::TEST_NAME_TO_ENCRYPT_3.as_bytes()));
-        assert!(pwhash::pwhash_verify(&pt_hahs_vec[3], constant::TEST_NAME_TO_ENCRYPT_4.as_bytes()));
+        let mut hash_state1 = hash::State::new();
+        hash_state1.update(constant::TEST_STRONG_PASS.as_bytes());
+        hash_state1.update(constant::TEST_NAME_TO_ENCRYPT.as_bytes());
+        let digest1 = hash_state1.finalize();
 
+        let mut hash_state2 = hash::State::new();
+        hash_state2.update(constant::TEST_STRONG_PASS.as_bytes());
+        hash_state2.update(constant::TEST_NAME_TO_ENCRYPT_2.as_bytes());
+        let digest2 = hash_state2.finalize();
+
+        let mut hash_state3 = hash::State::new();
+        hash_state3.update(constant::TEST_STRONG_PASS.as_bytes());
+        hash_state3.update(constant::TEST_NAME_TO_ENCRYPT_3.as_bytes());
+        let digest3 = hash_state3.finalize();
+
+        let mut hash_state4 = hash::State::new();
+        hash_state4.update(constant::TEST_STRONG_PASS.as_bytes());
+        hash_state4.update(constant::TEST_NAME_TO_ENCRYPT_4.as_bytes());
+        let digest4 = hash_state4.finalize();
+
+        assert_eq!(pt_hash_vec[0], digest1);
+        assert_eq!(pt_hash_vec[1], digest2);
+        assert_eq!(pt_hash_vec[2], digest3);
+        assert_eq!(pt_hash_vec[3], digest4);
 
         assert_eq!(decrypted_data_vec[0], constant::TEST_DATA_TO_ENCRYPT);
         assert_eq!(decrypted_data_vec[1], constant::TEST_DATA_TO_ENCRYPT_2);
         assert_eq!(decrypted_data_vec[2], constant::TEST_DATA_TO_ENCRYPT_3);
         assert_eq!(decrypted_data_vec[3], constant::TEST_DATA_TO_ENCRYPT_4);
+    }
+
+    #[test]
+    fn vault_md_retrieval() {
+        let test_vault = Vault::default();
+
+        let test_metad = &test_vault.metadata_vec[0];
+
+        // we have to find master key
+
+        let my_user_salt_slice = decode(&test_metad.user_salt, Variant::UrlSafe).unwrap();
+        let my_user_salt = pwhash::Salt::from_slice(&my_user_salt_slice).unwrap();
+
+        let mut mk = secretbox::Key([0; secretbox::KEYBYTES]);
+        let secretbox::Key(ref mut my_master_key) = mk;
+        pwhash::derive_key(
+            my_master_key,
+            constant::TEST_STRONG_PASS.as_bytes(), // we derive master pass here
+            &my_user_salt,
+            pwhash::OPSLIMIT_INTERACTIVE,
+            pwhash::MEMLIMIT_INTERACTIVE,
+        )
+        .unwrap();
+
+        //we have to find xsalsa key
+        let my_key_xsalsa = secretbox::xsalsa20poly1305::Key::from_slice(my_master_key).unwrap();
+
+        //we have to retriev the nonce
+        let my_nonce_slice = decode(&test_metad.user_nonce, Variant::UrlSafe).unwrap();
+        let my_nonce = secretbox::xsalsa20poly1305::Nonce::from_slice(&my_nonce_slice).unwrap();
+
+        // we decrypt to check if it works
+        let mut my_deciphered_test_name_vec: Vec<String> = Vec::new();
+        for enc_name in &test_metad.encrypted_filenames {
+            let decoded_enc_name = decode(enc_name, Variant::UrlSafe).unwrap();
+            let my_deciphered_test_name =
+                secretbox::open(&decoded_enc_name, &my_nonce, &my_key_xsalsa).unwrap();
+            my_deciphered_test_name_vec.push(Vault::vec_to_string(my_deciphered_test_name));
+        }
+
+        assert_eq!(
+            my_deciphered_test_name_vec[0],
+            constant::TEST_NAME_TO_ENCRYPT
+        );
+        assert_eq!(
+            my_deciphered_test_name_vec[1],
+            constant::TEST_NAME_TO_ENCRYPT_2
+        );
+        assert_eq!(
+            my_deciphered_test_name_vec[2],
+            constant::TEST_NAME_TO_ENCRYPT_3
+        );
+        assert_eq!(
+            my_deciphered_test_name_vec[3],
+            constant::TEST_NAME_TO_ENCRYPT_4
+        );
     }
 }

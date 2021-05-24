@@ -10,9 +10,19 @@ pub struct EncryptedFile {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MetaData {
-    pub unique_id: u64,
     pub encrypted_filenames: Vec<String>,
     pub user_salt: String,
     pub user_nonce: String,
     pub shared_secret: String,
+}
+
+impl MetaData {
+    pub fn empty() -> MetaData {
+        MetaData {
+            encrypted_filenames: Vec::new(),
+            user_salt: String::new(),
+            user_nonce: String::new(),
+            shared_secret: String::new(),
+        }
+    }
 }
