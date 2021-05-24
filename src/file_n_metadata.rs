@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct EncryptedFile {
-    pub encrypted_name: String, // might be replaced by a hash of decrpted file name instead
+    pub pt_filename_hash: String,
     pub encrypted_data: String,
     pub file_salt: String,
     pub file_nonce: String,

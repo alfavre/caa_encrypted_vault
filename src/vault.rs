@@ -2,6 +2,7 @@ use super::*;
 use file_n_metadata::{EncryptedFile, MetaData};
 use sodiumoxide::base64::*;
 use sodiumoxide::crypto::{pwhash, secretbox};
+use sodiumoxide::crypto::pwhash::HashedPassword;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Error, Write};
 
@@ -137,7 +138,7 @@ impl Vault {
         // making a nonce for the master key
         let my_nonce = secretbox::gen_nonce();
 
-        // we encrypt a filename
+        // we encrypt filenames
         let my_test_name_bytes: &[u8] = constant::TEST_NAME_TO_ENCRYPT.as_bytes(); // those weird casts are a sight to behold
         let my_test_name_encrypted = secretbox::seal(my_test_name_bytes, &my_nonce, &my_key_xsalsa); // need to be encoded b64 if I want a string, utf8 doesnt work
         let my_test_name_bytes2: &[u8] = constant::TEST_NAME_TO_ENCRYPT_2.as_bytes(); // those weird casts are a sight to behold
@@ -149,11 +150,6 @@ impl Vault {
         let my_test_name_bytes4: &[u8] = constant::TEST_NAME_TO_ENCRYPT_4.as_bytes(); // those weird casts are a sight to behold
         let my_test_name_encrypted4 =
             secretbox::seal(my_test_name_bytes4, &my_nonce, &my_key_xsalsa); // need to be encoded b64 if I want a string, utf8 doesnt work
-
-        // we decrypt to check if it works
-        //let my_deciphered_test_name =
-        //    secretbox::open(&my_test_name_encrypted, &my_nonce, &my_key_xsalsa).unwrap();
-        //let my_decoded_deciphered_test_name = Vault::vec_to_string(my_deciphered_test_name);
 
         // we store our encrypted file name
         let mut my_encrypted_filenames: Vec<String> = Vec::new();
@@ -171,7 +167,7 @@ impl Vault {
             user_nonce: encode(my_nonce, Variant::UrlSafe),
         };
 
-        // we will now encrypt the data of each file_n_metadata
+        // we will now encrypt the data of each file
 
         //we need a salt for each file
         let my_file_salt1 = pwhash::gen_salt();
@@ -269,30 +265,63 @@ impl Vault {
             &my_file_key_xsalsa_4,
         );
 
+        // we get a hash of the pt for each filename
+        let pwh1 = pwhash::pwhash(
+            constant::TEST_NAME_TO_ENCRYPT.as_bytes(),
+            pwhash::OPSLIMIT_INTERACTIVE,
+            pwhash::MEMLIMIT_INTERACTIVE,
+        )
+        .unwrap();
+        let pwh_bytes1 = pwh1.as_ref();
+
+        let pwh2 = pwhash::pwhash(
+            constant::TEST_NAME_TO_ENCRYPT_2.as_bytes(),
+            pwhash::OPSLIMIT_INTERACTIVE,
+            pwhash::MEMLIMIT_INTERACTIVE,
+        )
+        .unwrap();
+        let pwh_bytes2 = pwh2.as_ref();
+
+        let pwh3 = pwhash::pwhash(
+            constant::TEST_NAME_TO_ENCRYPT_3.as_bytes(),
+            pwhash::OPSLIMIT_INTERACTIVE,
+            pwhash::MEMLIMIT_INTERACTIVE,
+        )
+        .unwrap();
+        let pwh_bytes3 = pwh3.as_ref();
+
+        let pwh4 = pwhash::pwhash(
+            constant::TEST_NAME_TO_ENCRYPT_4.as_bytes(),
+            pwhash::OPSLIMIT_INTERACTIVE,
+            pwhash::MEMLIMIT_INTERACTIVE,
+        )
+        .unwrap();
+        let pwh_bytes4 = pwh4.as_ref();
+
         // we fill our structs
         let my_file_struct_1 = EncryptedFile {
-            encrypted_name: encode(my_test_name_encrypted.clone(), Variant::UrlSafe), // this one has been encrypted with master key, not file key
+            pt_filename_hash: encode(pwh_bytes1, Variant::UrlSafe), // this one has been encrypted with master key, not file key
             encrypted_data: encode(my_test_file_encrypted_1, Variant::UrlSafe),
             file_salt: encode(my_file_salt1, Variant::UrlSafe),
             file_nonce: encode(my_file_nonce_1, Variant::UrlSafe),
         };
 
         let my_file_struct_2 = EncryptedFile {
-            encrypted_name: encode(my_test_name_encrypted2.clone(), Variant::UrlSafe), // this one has been encrypted with master key, not file key
+            pt_filename_hash: encode(pwh_bytes2, Variant::UrlSafe), // this one has been encrypted with master key, not file key
             encrypted_data: encode(my_test_file_encrypted_2, Variant::UrlSafe),
             file_salt: encode(my_file_salt2, Variant::UrlSafe),
             file_nonce: encode(my_file_nonce_2, Variant::UrlSafe),
         };
 
         let my_file_struct_3 = EncryptedFile {
-            encrypted_name: encode(my_test_name_encrypted3.clone(), Variant::UrlSafe), // this one has been encrypted with master key, not file key
+            pt_filename_hash: encode(pwh_bytes3, Variant::UrlSafe), // this one has been encrypted with master key, not file key
             encrypted_data: encode(my_test_file_encrypted_3, Variant::UrlSafe),
             file_salt: encode(my_file_salt3, Variant::UrlSafe),
             file_nonce: encode(my_file_nonce_3, Variant::UrlSafe),
         };
 
         let my_file_struct_4 = EncryptedFile {
-            encrypted_name: encode(my_test_name_encrypted4.clone(), Variant::UrlSafe), // this one has been encrypted with master key, not file key
+            pt_filename_hash: encode(pwh_bytes4, Variant::UrlSafe), // this one has been encrypted with master key, not file key
             encrypted_data: encode(my_test_file_encrypted_4, Variant::UrlSafe),
             file_salt: encode(my_file_salt4, Variant::UrlSafe),
             file_nonce: encode(my_file_nonce_4, Variant::UrlSafe),
@@ -349,6 +378,7 @@ mod tests {
             let my_deciphered_test_name =
                 secretbox::open(&decoded_enc_name, &my_nonce, &my_key_xsalsa).unwrap();
             my_deciphered_test_name_vec.push(Vault::vec_to_string(my_deciphered_test_name));
+            
         }
 
         assert_eq!(
@@ -380,6 +410,8 @@ mod tests {
         // we have to find all files key
 
         let mut decrypted_data_vec: Vec<String> = Vec::new();
+        let mut pt_hahs_vec = Vec::new();
+
         for file in test_enc_file_vec {
             let my_file_hash_slice = decode(file.file_salt, Variant::UrlSafe).unwrap();
             let my_file_hash = pwhash::Salt::from_slice(&my_file_hash_slice).unwrap();
@@ -406,7 +438,16 @@ mod tests {
             let my_deciphered_data =
                 secretbox::open(&decoded_enc_data, &my_nonce, &my_key_xsalsa).unwrap();
             decrypted_data_vec.push(Vault::vec_to_string(my_deciphered_data));
+        
+            let pt_hash_slice = decode(file.pt_filename_hash, Variant::UrlSafe).unwrap();
+            pt_hahs_vec.push(HashedPassword::from_slice(&pt_hash_slice).unwrap());
         }
+
+        assert!(pwhash::pwhash_verify(&pt_hahs_vec[0], constant::TEST_NAME_TO_ENCRYPT.as_bytes()));
+        assert!(pwhash::pwhash_verify(&pt_hahs_vec[1], constant::TEST_NAME_TO_ENCRYPT_2.as_bytes()));
+        assert!(pwhash::pwhash_verify(&pt_hahs_vec[2], constant::TEST_NAME_TO_ENCRYPT_3.as_bytes()));
+        assert!(pwhash::pwhash_verify(&pt_hahs_vec[3], constant::TEST_NAME_TO_ENCRYPT_4.as_bytes()));
+
 
         assert_eq!(decrypted_data_vec[0], constant::TEST_DATA_TO_ENCRYPT);
         assert_eq!(decrypted_data_vec[1], constant::TEST_DATA_TO_ENCRYPT_2);
