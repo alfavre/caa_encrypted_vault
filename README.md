@@ -1,10 +1,13 @@
 # caa_encrypted_vault
 
-## Author Alban Favre
-
+## Author 
+```
+Alban Favre
+```
 ### Intro
 
 This is a practical rust work for school.
+This was done for the 2021 sixth semester of HEIG-VD's bachelor CAA course.
 
 ### Objectives
 
